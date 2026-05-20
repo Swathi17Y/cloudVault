@@ -1,0 +1,126 @@
+name: CloudVault CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  # ── Lint & Build Client ───────────────────────────────────────────────────
+  build-client:
+    name: Build Client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install dependencies
+        working-directory: client
+        run: npm ci
+
+      - name: Build production bundle
+        working-directory: client
+        run: npx vite build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: client-dist
+          path: client/dist
+          retention-days: 5
+
+  # ── Lint & Verify Server ──────────────────────────────────────────────────
+  verify-server:
+    name: Verify Server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install dependencies
+        working-directory: server
+        run: npm ci
+
+      - name: Syntax check (import validation)
+        working-directory: server
+        run: node --check src/server.js
+
+  # ── Deploy to EC2 (only on main push) ─────────────────────────────────────
+  deploy:
+    name: Deploy to Production
+    needs: [build-client, verify-server]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download client build
+        uses: actions/download-artifact@v4
+        with:
+          name: client-dist
+          path: client/dist
+
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            cd /opt/cloudvault
+            
+            # Pull latest code
+            git fetch origin main
+            git reset --hard origin/main
+            
+            # Build client
+            cd client && npm ci && npx vite build && cd ..
+            
+            # Deploy containers
+            docker-compose -f docker-compose.prod.yml down --remove-orphans
+            docker-compose -f docker-compose.prod.yml build --no-cache
+            docker-compose -f docker-compose.prod.yml up -d
+            
+            # Deploy client static files
+            sudo rm -rf /var/www/cloudvault/*
+            sudo cp -r client/dist/* /var/www/cloudvault/
+            sudo chown -R www-data:www-data /var/www/cloudvault
+            
+            # Reload NGINX
+            sudo nginx -t && sudo systemctl reload nginx
+            
+            # Wait for health check
+            sleep 10
+            curl -sf http://localhost:5000/api/health || echo "⚠️ Health check failed"
+            
+            # Cleanup
+            docker image prune -f
+            
+            echo "✅ Deployment complete!"
+
+      - name: Verify deployment
+        run: |
+          sleep 15
+          STATUS=$(curl -sf -o /dev/null -w "%{http_code}" "https://${{ secrets.DOMAIN }}" || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            echo "✅ Site is live and returning 200"
+          else
+            echo "⚠️ Site returned HTTP $STATUS"
+            exit 1
+          fi
