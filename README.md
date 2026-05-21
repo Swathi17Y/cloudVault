@@ -1,10 +1,10 @@
-# CloudVault ☁️
+# CloudVault 
 
 A modern, full-stack, distributed file storage platform built to handle resilient chunked file uploads, dynamic folder management, and secure file sharing.
 
 CloudVault provides an elegant, glassmorphic UI alongside a robust backend capable of processing massive file uploads without blocking the main API thread.
 
-## 🚀 Features
+## Features
 
 - **Authentication System**: Secure user registration, login, and JWT-based session management (Access & Refresh tokens).
 - **Resilient Chunked Uploads**: Files are sliced into 5MB chunks and uploaded concurrently. A background worker node safely assembles the chunks on the server.
@@ -59,9 +59,9 @@ The entire application is fully containerized and can be launched with a single 
 
 4. **Access the Application:**
    Once all containers are healthy, access the platform at:
-   👉 **http://localhost:5173**
+    **http://localhost:5173**
 
-## 🏗️ Architecture Overview
+##  Architecture Overview
 
 When you run `docker-compose up -d`, the following services spin up:
 1. **`client`** (React frontend served via Vite on port `5173`)
